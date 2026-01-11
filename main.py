@@ -4,11 +4,12 @@
 import asyncio
 import logging
 from aiogram import Bot, Dispatcher
+from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 from aiogram.fsm.storage.memory import MemoryStorage
 
 from config import BOT_TOKEN
-from handlers import start, products, expenses, statistics, calculator  # Добавлен calculator
+from handlers import start, products, expenses, statistics, calculator
 
 # Настройка логирования
 logging.basicConfig(
@@ -20,8 +21,11 @@ logger = logging.getLogger(__name__)
 
 async def main():
     """Главная функция запуска бота"""
-    # Инициализация бота и диспетчера
-    bot = Bot(token=BOT_TOKEN, parse_mode=ParseMode.HTML)
+    # Инициализация бота и диспетчера с новым синтаксисом
+    bot = Bot(
+        token=BOT_TOKEN,
+        default=DefaultBotProperties(parse_mode=ParseMode.HTML)
+    )
     storage = MemoryStorage()
     dp = Dispatcher(storage=storage)
 
@@ -30,7 +34,7 @@ async def main():
     dp.include_router(products.router)
     dp.include_router(expenses.router)
     dp.include_router(statistics.router)
-    dp.include_router(calculator.router)  # Добавлен calculator
+    dp.include_router(calculator.router)
 
     # Удаление вебхуков и запуск поллинга
     await bot.delete_webhook(drop_pending_updates=True)

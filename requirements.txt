@@ -1,4 +1,5 @@
-aiogram==3.4.1
+aiogram==3.7.0
 python-dotenv==1.0.0
 reportlab==4.0.9
 matplotlib==3.8.2
+aiogram-calendar==1.1.3

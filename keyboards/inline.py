@@ -76,9 +76,16 @@ def get_products_keyboard(products: List[Dict], category_id: int) -> InlineKeybo
     builder = InlineKeyboardBuilder()
 
     for product in products:
+        # Показываем полное название товара
+        display_text = f"📦 {product['name']} — {product['selling_price']:.0f}₽"
+
+        # Если название очень длинное (больше 60 символов), обрезаем только для отображения
+        if len(display_text) > 64:
+            display_text = f"📦 {product['name'][:50]}... — {product['selling_price']:.0f}₽"
+
         builder.row(
             InlineKeyboardButton(
-                text=f"📦 {product['name']} - {product['selling_price']:.0f}₽",
+                text=display_text,
                 callback_data=f"view_product:{product['id']}"
             )
         )
@@ -190,5 +197,39 @@ def get_cancel_keyboard() -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     builder.row(
         InlineKeyboardButton(text="❌ Отмена", callback_data="main_menu")
+    )
+    return builder.as_markup()
+
+def get_statistics_menu() -> InlineKeyboardMarkup:
+    """Меню статистики"""
+    builder = InlineKeyboardBuilder()
+    builder.row(
+        InlineKeyboardButton(text="📅 Сегодня", callback_data="stats:day"),
+        InlineKeyboardButton(text="📆 Месяц", callback_data="stats:month"),
+        width=2
+    )
+    builder.row(
+        InlineKeyboardButton(text="📊 Всё время", callback_data="stats:all")
+    )
+    builder.row(
+        InlineKeyboardButton(text="📋 Произвольный период", callback_data="stats:custom")
+    )
+    builder.row(
+        InlineKeyboardButton(text="🔙 Назад", callback_data="main_menu")
+    )
+    return builder.as_markup()
+
+
+def get_date_input_method_keyboard() -> InlineKeyboardMarkup:
+    """Выбор способа ввода даты"""
+    builder = InlineKeyboardBuilder()
+    builder.row(
+        InlineKeyboardButton(text="📅 Выбрать через календарь", callback_data="date_method:calendar")
+    )
+    builder.row(
+        InlineKeyboardButton(text="⌨️ Ввести вручную", callback_data="date_method:manual")
+    )
+    builder.row(
+        InlineKeyboardButton(text="🔙 Назад", callback_data="statistics_menu")
     )
     return builder.as_markup()

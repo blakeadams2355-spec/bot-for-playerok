@@ -2,8 +2,9 @@
 Обработчики для работы с товарами
 """
 from aiogram import Router, F
-from aiogram.types import Message, CallbackQuery, InputMediaPhoto
+from aiogram.types import Message, CallbackQuery, InputMediaPhoto, InlineKeyboardButton
 from aiogram.fsm.context import FSMContext
+from aiogram.utils.keyboard import InlineKeyboardBuilder
 from keyboards.inline import (
     get_products_menu, get_categories_keyboard, get_products_keyboard,
     get_product_card_keyboard, get_edit_product_keyboard,
@@ -12,6 +13,7 @@ from keyboards.inline import (
 from database import Database
 from config import DATABASE_PATH
 from states.forms import ProductForm, EditProductForm
+from datetime import datetime
 
 router = Router()
 db = Database(DATABASE_PATH)
@@ -183,42 +185,132 @@ async def add_product_purchase_price(message: Message, state: FSMContext):
 
 @router.message(ProductForm.waiting_for_selling_price)
 async def add_product_selling_price(message: Message, state: FSMContext):
-    """Получение цены продажи и сохранение товара"""
+    """Получение цены продажи и запрос информации о поставщике"""
     try:
         selling_price = float(message.text.replace(',', '.'))
         if selling_price <= 0:
             raise ValueError
 
-        data = await state.get_data()
+        await state.update_data(selling_price=selling_price)
 
-        commission = db.get_commission()
-        profit = selling_price - data['purchase_price'] - (selling_price * commission / 100)
-
-        product_id = db.add_product(
-            category_id=data['category_id'],
-            name=data['name'],
-            photo_id=data['photo_id'],
-            purchase_price=data['purchase_price'],
-            selling_price=selling_price
+        # Спрашиваем про поставщика
+        builder = InlineKeyboardBuilder()
+        builder.row(
+            InlineKeyboardButton(text="➕ Добавить поставщика", callback_data="add_supplier")
+        )
+        builder.row(
+            InlineKeyboardButton(text="⏭ Пропустить", callback_data="skip_supplier")
         )
 
-        await state.clear()
-
-        from keyboards.inline import get_main_menu
         await message.answer(
-            f"✅ <b>Товар добавлен!</b>\n\n"
-            f"📦 Название: {data['name']}\n"
-            f"💵 Закупка: {data['purchase_price']:.2f} ₽\n"
-            f"💰 Продажа: {selling_price:.2f} ₽\n"
-            f"📊 Прибыль с 1 шт: {profit:.2f} ₽",
-            reply_markup=get_main_menu(),
+            "📋 <b>Хотите добавить информацию о поставщике?</b>\n\n"
+            "Это поможет отслеживать, где вы покупаете товар",
+            reply_markup=builder.as_markup(),
             parse_mode="HTML"
         )
+        await state.set_state(ProductForm.waiting_for_supplier)
+
     except ValueError:
         await message.answer(
             "❌ Ошибка! Введите корректную цену (например, 2000 или 2000.50):",
             parse_mode="HTML"
         )
+
+
+@router.callback_query(F.data == "add_supplier", ProductForm.waiting_for_supplier)
+async def ask_supplier_info(callback: CallbackQuery, state: FSMContext):
+    """Запрос информации о поставщике"""
+    await callback.message.edit_text(
+        "📝 <b>Введите информацию о поставщике</b>\n\n"
+        "Формат (каждое с новой строки):\n"
+        "1️⃣ Название поставщика\n"
+        "2️⃣ Ссылка на товар\n\n"
+        "Пример:\n"
+        "<code>ООО \"Поставщик\"\n"
+        "https://example.com/product</code>",
+        reply_markup=get_cancel_keyboard(),
+        parse_mode="HTML"
+    )
+    await callback.answer()
+
+
+@router.message(ProductForm.waiting_for_supplier, F.text)
+async def save_product_with_supplier(message: Message, state: FSMContext):
+    """Сохранение товара с информацией о поставщике"""
+    lines = message.text.strip().split('\n')
+
+    supplier_name = lines[0].strip() if len(lines) > 0 else None
+    supplier_link = lines[1].strip() if len(lines) > 1 else None
+
+    data = await state.get_data()
+
+    commission = db.get_commission()
+    profit = data['selling_price'] - data['purchase_price'] - \
+             (data['selling_price'] * commission / 100)
+
+    product_id = db.add_product(
+        category_id=data['category_id'],
+        name=data['name'],
+        photo_id=data['photo_id'],
+        purchase_price=data['purchase_price'],
+        selling_price=data['selling_price'],
+        supplier_name=supplier_name,
+        supplier_link=supplier_link
+    )
+
+    await state.clear()
+
+    from keyboards.inline import get_main_menu
+
+    supplier_info = ""
+    if supplier_name or supplier_link:
+        supplier_info = f"\n\n📦 <b>Поставщик:</b> {supplier_name or 'Не указан'}"
+        if supplier_link:
+            supplier_info += f"\n🔗 <a href='{supplier_link}'>Ссылка на товар</a>"
+
+    await message.answer(
+        f"✅ <b>Товар добавлен!</b>\n\n"
+        f"📦 Название: {data['name']}\n"
+        f"💵 Закупка: {data['purchase_price']:.2f} ₽\n"
+        f"💰 Продажа: {data['selling_price']:.2f} ₽\n"
+        f"📊 Прибыль с 1 шт: {profit:.2f} ₽"
+        f"{supplier_info}",
+        reply_markup=get_main_menu(),
+        parse_mode="HTML",
+        disable_web_page_preview=True
+    )
+
+
+@router.callback_query(F.data == "skip_supplier", ProductForm.waiting_for_supplier)
+async def skip_supplier_info(callback: CallbackQuery, state: FSMContext):
+    """Пропуск добавления поставщика"""
+    data = await state.get_data()
+
+    commission = db.get_commission()
+    profit = data['selling_price'] - data['purchase_price'] - \
+             (data['selling_price'] * commission / 100)
+
+    product_id = db.add_product(
+        category_id=data['category_id'],
+        name=data['name'],
+        photo_id=data['photo_id'],
+        purchase_price=data['purchase_price'],
+        selling_price=data['selling_price']
+    )
+
+    await state.clear()
+
+    from keyboards.inline import get_main_menu
+    await callback.message.edit_text(
+        f"✅ <b>Товар добавлен!</b>\n\n"
+        f"📦 Название: {data['name']}\n"
+        f"💵 Закупка: {data['purchase_price']:.2f} ₽\n"
+        f"💰 Продажа: {data['selling_price']:.2f} ₽\n"
+        f"📊 Прибыль с 1 шт: {profit:.2f} ₽",
+        reply_markup=get_main_menu(),
+        parse_mode="HTML"
+    )
+    await callback.answer()
 
 
 # === ПРОСМОТР ТОВАРОВ ===
@@ -341,6 +433,14 @@ async def view_product(callback: CallbackQuery):
         f"💳 Комиссия: {commission}%"
     )
 
+    # Добавляем информацию о поставщике если есть
+    if product.get('supplier_name') or product.get('supplier_link'):
+        caption += f"\n\n📦 <b>Поставщик:</b>"
+        if product.get('supplier_name'):
+            caption += f"\n{product['supplier_name']}"
+        if product.get('supplier_link'):
+            caption += f"\n🔗 <a href='{product['supplier_link']}'>Ссылка на товар</a>"
+
     # Проверяем, есть ли фото в текущем сообщении
     if callback.message.photo:
         # Если уже есть фото, редактируем caption
@@ -348,7 +448,8 @@ async def view_product(callback: CallbackQuery):
             await callback.message.edit_caption(
                 caption=caption,
                 reply_markup=get_product_card_keyboard(product_id),
-                parse_mode="HTML"
+                parse_mode="HTML",
+                disable_web_page_preview=False
             )
         except:
             # Если не получилось отредактировать, удаляем и отправляем заново
@@ -371,7 +472,7 @@ async def view_product(callback: CallbackQuery):
     await callback.answer()
 
 
-# === ПРОДАЖА ТОВАРА ===
+# === ПРОДАЖА ТОВАРА С ВОЗМОЖНОСТЬЮ ОТМЕНЫ ===
 
 @router.callback_query(F.data.startswith("sell_product:"))
 async def sell_product(callback: CallbackQuery):
@@ -386,10 +487,57 @@ async def sell_product(callback: CallbackQuery):
     # Записываем продажу
     sale_id, profit = db.add_sale(product_id)
 
-    await callback.answer(
-        f"✅ Продажа '{product['name']}' записана!\nПрибыль: +{profit:.2f} ₽",
-        show_alert=True
+    # Создаём клавиатуру с кнопкой отмены
+    builder = InlineKeyboardBuilder()
+    builder.row(
+        InlineKeyboardButton(text="↩️ Отменить продажу", callback_data=f"cancel_sale:{sale_id}")
     )
+
+    # Отправляем уведомление с кнопкой отмены
+    await callback.message.answer(
+        f"✅ <b>Продажа записана!</b>\n\n"
+        f"📦 Товар: {product['name']}\n"
+        f"💰 Прибыль: <b>+{profit:.2f} ₽</b>\n\n"
+        f"<i>У вас есть возможность отменить эту продажу</i>",
+        reply_markup=builder.as_markup(),
+        parse_mode="HTML"
+    )
+
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("cancel_sale:"))
+async def cancel_sale(callback: CallbackQuery):
+    """Отмена продажи"""
+    sale_id = int(callback.data.split(":")[1])
+
+    # Получаем информацию о продаже
+    sale = db.get_sale_by_id(sale_id)
+
+    if not sale:
+        await callback.answer("❌ Продажа не найдена", show_alert=True)
+        return
+
+    if sale['is_cancelled'] == 1:
+        await callback.answer("❌ Эта продажа уже была отменена", show_alert=True)
+        return
+
+    # Отменяем продажу
+    success = db.cancel_sale(sale_id)
+
+    if success:
+        # Редактируем сообщение
+        await callback.message.edit_text(
+            f"❌ <b>Продажа отменена</b>\n\n"
+            f"📦 Товар: {sale['product_name']}\n"
+            f"💸 Сумма: {sale['selling_price']:.2f} ₽\n"
+            f"📊 Прибыль была: {sale['profit']:.2f} ₽\n"
+            f"⏰ Дата отмены: {datetime.now().strftime('%d.%m.%Y %H:%M')}",
+            parse_mode="HTML"
+        )
+        await callback.answer("✅ Продажа успешно отменена", show_alert=True)
+    else:
+        await callback.answer("❌ Ошибка при отмене продажи", show_alert=True)
 
 
 # === РЕДАКТИРОВАНИЕ ТОВАРА ===
